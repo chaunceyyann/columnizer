@@ -1,64 +1,165 @@
 #!/bin/bash
 ######################################################################################################
-# Program	: formater
+# Program	: columnizer (formater)
 # Author	: Chauncey Yan
-# Functions	:
-# Revision	: 0.1
-# Mod date	: Aug 28 2014
-# Updates	:
-# Issues	:
+# Functions	: Format tabular data into aligned columns
+# Revision	: 0.2
+# Mod date	: December 2024
+# Updates	: Improved error handling, documentation, and functionality
+# Issues	: Fixed stdin support, added usage help, improved variable handling
 ######################################################################################################
-# Init		:
+# Configuration and initialization
 ######################################################################################################
 
+# Global variables
+declare -a max              # Array to store maximum width for each column
+arrsize_max=0              # Maximum number of columns found
+INPUT_FILE=""              # Input file path
+VERSION="0.2"
+
 ######################################################################################################
-# Function	:
-# Input		:
-# Output	:
-# Issues	:
+# Function	: lineMaxer
+# Input		: $line (global variable containing current line)
+# Output	: Updates global arrays max[] and arrsize_max
+# Purpose	: Analyze a line to determine column widths needed
 ######################################################################################################
-lineMaxer () {
-	arr=($(echo $line))
-	if [[ $arrsize_max -lt ${#arr[@]} ]];then
-		arrsize_max=${#arr[@]}
-	fi
-	
-	for (( i=0; i<${#arr[@]}; i++ ));do
-		if [[ ${max[$i]} -lt ${#arr[$i]} ]];then
-			((bit=${#arr[$i]}/8+1))
-			((col=$bit*8))
-			max[$i]=$col
-		fi
-	done
+lineMaxer() {
+    local -a arr
+    # Split line into array, handling multiple spaces correctly
+    read -ra arr <<< "$line"
+
+    # Update maximum number of columns if this line has more
+    if [[ $arrsize_max -lt ${#arr[@]} ]]; then
+        arrsize_max=${#arr[@]}
+    fi
+
+    # Calculate maximum width needed for each column
+    for (( i=0; i<${#arr[@]}; i++ )); do
+        local field_length=${#arr[$i]}
+        if [[ ${max[$i]:-0} -lt $field_length ]]; then
+            # Round up to next tab stop (multiple of 8)
+            local bit=$(( (field_length / 8) + 1 ))
+            local col=$(( bit * 8 ))
+            max[$i]=$col
+        fi
+    done
 }
 
 ######################################################################################################
-# Function	:
-# Input		:
-# Output	:
-# Issues	:
+# Function	: recreate
+# Input		: $1 (file path to read and format)
+# Output	: Formatted columns to stdout
+# Purpose	: Format and output the data using calculated column widths
 ######################################################################################################
-recreate () {
-	while read line; do
-		word_arr=($(echo $line))
-		for (( m=0; m < $arrsize_max; m++ ));do
-			printf "%-${max[$m]}s" ${word_arr[$m]}
-		done
-		echo
-	done < $1
+recreate() {
+    local input_file="$1"
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        local -a word_arr
+        read -ra word_arr <<< "$line"
+
+        # Print each field with proper width, except the last one
+        for (( m=0; m < $arrsize_max; m++ )); do
+            if [[ $m -eq $((arrsize_max - 1)) ]]; then
+                # Don't pad the last column
+                printf "%s" "${word_arr[$m]:-}"
+            else
+                printf "%-${max[$m]:-8}s" "${word_arr[$m]:-}"
+            fi
+        done
+        echo
+    done < "$input_file"
 }
 ######################################################################################################
-# Main		:
-# Issues	:
+# Function	: show_help
+# Purpose	: Display usage information
 ######################################################################################################
-if [[ -n $1 ]];then 
-	while read line; do
-		lineMaxer
-	done < $1
-	recreate $1
-else
-	echo ERROR: No argument
-fi
+show_help() {
+    cat << EOF
+Columnizer v$VERSION - Format tabular data into aligned columns
 
+USAGE:
+    $0 <input_file>
+    $0 -h|--help
+    $0 -v|--version
 
+EXAMPLES:
+    $0 data.txt                 # Format data.txt
+    echo "a b c" | $0 /dev/stdin # Format from pipe
 
+DESCRIPTION:
+    Reads whitespace-separated data and formats it into aligned columns
+    using tab-stop spacing for consistent alignment.
+
+OPTIONS:
+    -h, --help      Show this help message
+    -v, --version   Show version information
+
+EOF
+}
+
+######################################################################################################
+# Function	: show_version
+# Purpose	: Display version information
+######################################################################################################
+show_version() {
+    echo "Columnizer version $VERSION"
+}
+
+######################################################################################################
+# Main execution
+######################################################################################################
+main() {
+    # Parse command line arguments
+    case "${1:-}" in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -v|--version)
+            show_version
+            exit 0
+            ;;
+        "")
+            echo "ERROR: No input file specified" >&2
+            echo "Use '$0 --help' for usage information" >&2
+            exit 1
+            ;;
+        -*)
+            echo "ERROR: Unknown option '$1'" >&2
+            echo "Use '$0 --help' for usage information" >&2
+            exit 1
+            ;;
+        *)
+            INPUT_FILE="$1"
+            ;;
+    esac
+
+    # Validate input file
+    if [[ ! -f "$INPUT_FILE" && "$INPUT_FILE" != "/dev/stdin" ]]; then
+        echo "ERROR: File '$INPUT_FILE' does not exist" >&2
+        exit 1
+    fi
+
+    if [[ ! -r "$INPUT_FILE" ]]; then
+        echo "ERROR: Cannot read file '$INPUT_FILE'" >&2
+        exit 1
+    fi
+
+    # First pass: analyze all lines to determine column widths
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" ]] && continue  # Skip empty lines
+        lineMaxer
+    done < "$INPUT_FILE"
+
+    # Second pass: format and output the data
+    if [[ $arrsize_max -gt 0 ]]; then
+        recreate "$INPUT_FILE"
+    else
+        echo "WARNING: No data found to format" >&2
+        exit 1
+    fi
+}
+
+# Execute main function with all arguments
+main "$@"
